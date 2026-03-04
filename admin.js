@@ -25,8 +25,48 @@ function toast(msg){
 }
 
 function safeParse(s, fallback){ try{ return JSON.parse(s);}catch{ return fallback; } }
-function getVideos(){ return safeParse(localStorage.getItem(STORAGE_KEY), []); }
-function setVideos(v){ localStorage.setItem(STORAGE_KEY, JSON.stringify(v)); }
+
+/* =========================
+   ✅ DB NORMALIZADO (definitivo)
+   - suporta migração se antes era array direto
+   - garante db.videos sempre como array
+========================= */
+function readDB(){
+  const fallback = { videos: [] };
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if(!raw) return fallback;
+
+  try{
+    const parsed = JSON.parse(raw);
+
+    // ✅ migração: se antes você salvava um array direto
+    if(Array.isArray(parsed)) return { videos: parsed };
+
+    // ✅ se veio null/qualquer coisa estranha
+    if(!parsed || typeof parsed !== "object") return fallback;
+
+    // ✅ garante array
+    if(!Array.isArray(parsed.videos)) parsed.videos = [];
+
+    return parsed;
+  }catch{
+    return fallback;
+  }
+}
+
+function writeDB(db){
+  if(!db || typeof db !== "object") db = { videos: [] };
+  if(!Array.isArray(db.videos)) db.videos = [];
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+}
+
+// agora tudo no código continua usando "array", mas por baixo é db.videos
+function getVideos(){ return readDB().videos; }
+function setVideos(v){
+  const db = readDB();
+  db.videos = Array.isArray(v) ? v : [];
+  writeDB(db);
+}
 
 function uid(){ return Math.random().toString(16).slice(2) + Date.now().toString(16); }
 
@@ -199,10 +239,13 @@ function removeVideo(id){
 }
 
 function render(){
+  // ✅ agora sempre vem array, porque getVideos() usa readDB().videos normalizado
+  const videos = getVideos();
+
   const qEl = $("q");
   const q = qEl ? normalize(qEl.value) : "";
 
-  let list = getVideos().slice();
+  let list = videos.slice(); // ✅ seguro
 
   if(q){
     list = list.filter(v=>{
@@ -262,14 +305,19 @@ function render(){
 }
 
 function seed(){
-  const existing = getVideos();
-  if(existing.length){
+  // ✅ lê DB normalizado
+  const db = readDB();
+
+  // mantém sua lógica antiga de confirmar overwrite
+  if(db.videos.length){
     const ok = confirm("Já existem vídeos cadastrados. SOBRESCREVER com exemplos?");
     if(!ok) return;
   }
 
   const now = Date.now();
-  setVideos([
+
+  // ✅ garante que vai gravar como db.videos
+  db.videos = [
     {
       id: uid(),
       url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
@@ -280,8 +328,9 @@ function seed(){
       tags: ["atendimento","padrão","cliente"],
       createdAt: now-100000
     }
-  ]);
+  ];
 
+  writeDB(db);
   render();
   toast("Exemplos carregados");
 }
@@ -298,7 +347,10 @@ function wire(){
     requireAuth(()=>{
       const ok = confirm("Apagar TODOS os vídeos?");
       if(!ok) return;
+
+      // pode remover item inteiro — readDB lida com ausência
       localStorage.removeItem(STORAGE_KEY);
+
       clearForm();
       render();
       toast("Tudo apagado");
@@ -352,7 +404,7 @@ function wire(){
         return;
       }
 
-      const videos = getVideos();
+      const videos = getVideos(); // ✅ vem de db.videos normalizado
       const now = Date.now();
 
       if(id){
